@@ -67,10 +67,68 @@ def add_comm_nodes(graph: Graph):
             if any(["multinomial" in child.name for child in node.users]):
                 assert all(["multinomial" in child.name for child in node.users])
                 continue
-            # Insert one and only one comm node
+            '''
+            # New: Insert comm_in and comm_out before and after a tier_linear node
+            parents = list(node._input_nodes.keys()) if hasattr(node, "_input_nodes") else []
+            children = list(node.users.keys()) if hasattr(node, "users") else []
+            # ---------- 1) comm_in ----------
+            comm_in = Node( # create a new node
+                graph,
+                f"comm_in_{id_generator.get_addr()}_seq_{seq_id_from_op(node)}",
+                "placeholder",
+                "no_target",
+                args=tuple(),
+                kwargs={},
+            )
+            # prev--node => prev--comm_in--node
+            comm_in._prev = node._prev
+            comm_in._next = node
+            if node._prev is not None:
+                node._prev._next = comm_in
+            node._prev = comm_in
+            # [input_nodes]==node => [input_nodes]==comm_in--[node]
+            comm_in.users[node] = None
+            for p in parents:
+                comm_in._input_nodes[p] = None
+                if hasattr(p, "users") and (node in p.users):
+                    p.users.pop(node)
+                    p.users[comm_in] = None
+                if hasattr(p, "_next") and p._next is node:
+                    p._next = comm_in
+            node._input_nodes = {comm_in: None}
+
+            # ---------- 1) comm_out ----------
+            comm_out = Node(
+                graph,
+                f"comm_out_{id_generator.get_addr()}_seq_{seq_id_from_op(node)}",
+                "placeholder",
+                "no_target",
+                args=tuple(),
+                kwargs={},
+            )
+            # node--next => node--comm_out--next
+            comm_out._prev = node
+            comm_out._next = node._next
+            if node._next is not None:
+                node._next._prev = comm_out
+            node._next = comm_out
+            # node==[users] => node--comm_out==[users]
+            comm_out._input_nodes[node] = None
+            for c in children:
+                comm_out.users[c] = None
+                if hasattr(c, "_input_nodes") and (node in c._input_nodes):
+                    c._input_nodes.pop(node)
+                    c._input_nodes[comm_out] = None
+                if hasattr(c, "_prev") and c._prev is node:
+                    c._prev = comm_out
+            node.users = {comm_out: None}
+            
+            graph._len += 2
+            '''
+            # Old: Insert one and only one comm node after tier_linear
             comm_node = Node(
                 graph,
-                f"communication_{id_generator.get_addr()}_seq_{seq_id_from_op(node)}",
+                f"communication_out_{id_generator.get_addr()}_seq_{seq_id_from_op(node)}",
                 "placeholder",
                 "no_target",
                 args=tuple(),
@@ -97,7 +155,7 @@ def add_comm_nodes(graph: Graph):
                 # That is because we are doing a streaming/hierarchical argmax
                 comm_node = Node(
                     graph,
-                    f"communication_{id_generator.get_addr()}_seq_{seq_id_from_op(node)}",
+                    f"communication_norm_{id_generator.get_addr()}_seq_{seq_id_from_op(node)}",
                     "placeholder",
                     "no_target",
                     args=tuple(),
@@ -136,7 +194,7 @@ def add_comm_nodes(graph: Graph):
             for child in analog_children:
                 comm_node = Node(
                     graph,
-                    f"communication_{id_generator.get_addr()}_seq_{seq_id_from_op(node)}",
+                    f"communication_in_{id_generator.get_addr()}_seq_{seq_id_from_op(node)}",
                     "placeholder",
                     "no_target",
                     args=tuple(),
@@ -168,13 +226,15 @@ def add_comm_nodes(graph: Graph):
             node._next = comm_nodes[0]
 
 
-def remove_unimportant_nodes_and_reconnect(graph: Graph, kv_caching: bool = False):
+def remove_unimportant_nodes_and_reconnect(graph: Graph, kv_caching: bool = False, prefill: bool = False):
     node: Node
     for node in graph.nodes:
         if node.op == "output":
             continue
         if kv_caching and "mha" in node.name:
             node.kwargs["op_info"]["kv_caching"] = True
+        if prefill and "mha" in node.name:
+            node.kwargs["op_info"]["prefill"] = True
         if not is_important(node):
             for u in node._input_nodes:
                 for v in node.users:

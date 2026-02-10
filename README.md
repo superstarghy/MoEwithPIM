@@ -1,178 +1,82 @@
-# 3D-SiM 🌇
+# MoE-PIM
 
-### Julian Büchel, Athanasios Vasilopoulos, William Andrew Simon, Irem Boybat, HsinYu Tsai, Geoffrey W. Burr, Hernan Castro, Bill Filipiak, Manuel Le Gallo, Abbas Rahimi, Vijay Narayanan, Abu Sebastian
+Repository of the paper Area-Efficient In-Memory Computing for
+Mixture-of-Experts via Multiplexing and Caching
+[![github-repo](https://img.shields.io/badge/github-grey?logo=github)](https://github.com/superstarghy/MoEwithPIM)
+[![Paper](https://img.shields.io/badge/paper-blue?logo=ieee)]()
+[![arxiv](https://img.shields.io/badge/arxiv-red?logo=arxiv)]()
 
-_Nature Computational Science, 2024_ [[Article]](https://www.nature.com/articles/s43588-024-00753-x#citeas)
+<p align="center">
+  <img src="./figures/overview.PNG" width="60%">
+</p>
 
-<div align="center">
-  <img src='figures/header.png' width="90%"/>
-</div>
 
-Welcome to the repository of 3D "Simulate" in Memory.
+## Get started
 
-## Getting started 🚀
+### Setup
 Clone the repository, step inside it and install.
 ```bash
-cd 3D-SiM/
+cd MoEwithPIM
 pip install -e .
 ```
 
-## Checking whether everything works
-To run the tests, run `python -m pytest -v tests/`
+### Run
 
-## Example
-```python
-from threedsim.accelerator import Accelerator, AcceleratorConfig
-from threedsim.inference import schedule_execution, fast_trace_decoder
-from threedsim.models import DecoderOnlyTransformer
-from threedsim.modules import TransformerDecoderLayer
-from threedsim.modules.base import (
-    assign_acc,
-    fill_name_fields,
-    make_traceable,
-    make_use_linear,
-)
-from threedsim.mapping import Mapper, MapStrategy, Strategy
-
-
-# Configure the accelerator.
-# NOTE: In the the accelerator class, you need to implement the functions that define the latencies [ns] and energy consumed [nJ] for every high-level operation we support.
-config = AcceleratorConfig(
-    tiles=100, tiers=1024, tier_shape=(512, 512), kv_caching=False
-)
-
-num_sequences = 1
-start_len = 1
-target_len = 12
-num_layers = 3
-d_model = 512
-d_ff = 4 * d_model
-vocab_size = 1024
-
-device = "meta"
-# Create the accelerator
-acc = Accelerator(config, device=device)
-decoder_layer_kwargs = {
-    "d_model": d_model,
-    "nhead": 8,
-    "dim_feedforward": d_ff,
-}
-embedding_layer_kwargs = {
-    "vocab_size": vocab_size,
-    "embedding_dim": d_model,
-    "max_seq_length": target_len,
-}
-# Create the model
-model = DecoderOnlyTransformer(
-    TransformerDecoderLayer,
-    num_layers=num_layers,
-    decoder_layer_kwargs=decoder_layer_kwargs,
-    embedding_layer_kwargs=embedding_layer_kwargs,
-    device=device,
-)
-
-# Each model layer has access to the accelerator
-assign_acc(model, acc)
-
-# Create the mapper
-mapper = Mapper(
-    accelerator=acc,
-    model=model,
-    map_strategy=MapStrategy(
-        strategy=Strategy.GREEDY_IN_ORDER, split_ffn=True, stack_embedding=True
-    ),
-)
-mapper.map_network()
-fill_name_fields(model)
-make_traceable(model, is_traceable=True)
-
-# Trace the model
-make_use_linear(model, use_linear=True)
-fast_traced = fast_trace_decoder(
-    model, start_len=start_len, target_len=target_len, bsz=num_sequences
-)
-
-# Pipelined execution of the model
-(
-    execution_time,
-    memory,
-    peak_memory,
-    energy,
-    flops,
-    energy_breakdown,
-    latency_breakdown,
-) = schedule_execution(
-    fast_traced.graph,
-    accelerator=model.accelerator,
-    copy_and_cleanup_graph=False,
-    communication=True,
-)
-print(f"Execution took {execution_time} ns")
-print(f"Required {peak_memory} bytes of scratchpad memory")
-print(f"Spent {energy} nJ of energy")
+Start from [`main.py`](./main.py).
+```
+python main.py --new_length 8 --kv_flag --go_flag
 ```
 
-## Plotting
-You can take a look at the generated pipeline and at the execution graph. For the execution graph:
+The workflow of threedcim simulator:
+
+```python
+import threedsim
+# Accelerator configuration
+config = threedsim.accelerator.AcceleratorConfig(...)
+# Instantiate the Accelerator Object
+acc = Accelerator(config, device=device)
+# Software model configuration
+#!Important: use the modules in threedim
+model = threedsim.models.DecoderOnlyTransformer(
+    threedsim.modules.TransformerDecoderLayer, ...)
+assign_acc(model, acc)
+# Mapper, strategy to schedule
+mapper = threedsim.mapping.Mapper()
+# Run simulation and trace
+fast_traced = fast_trace_decoder(model,)
+eval_results = threedsim.inference.schedule_execution(
+    fast_traced.graph, model.accelerator, ...)
+```
+
+To use the dynamic scheduler simulator, first of all, collect any data of expert load statistics (number of tokens an expert recieved) from an MoE model.
+For example, the data shape is (#layer, #batch, #expert), including the expert load amount of different batches and layers.
+
+Check [`moe_schedule.py`](./moe_schedule.py) to see the design of the scheduler and different types of dataflow.
+
+```
+python moe_schedule.py --gate_load_path load.npy --num_layers 4
+```
+
+### Plotting
+
+The threedcim simulator provides tools to plot the execution grapgh. Set the `plot` flag in `schedule_execution` to plot the inference pipeline.
+
 ```python
 from threedsim.plotting import plot_graph
 ...
-fast_traced = fast_trace_decoder(
-    model, start_len=start_len, target_len=target_len, bsz=num_sequences
-)
+fast_traced = fast_trace_decoder(model, start_len, target_len, num_sequences)
 plot_graph(fast_traced, "results/encoder_decoder_fast_tracing.svg")
+
+_ = schedule_execution(...,  plot=True, plot_dir="results")
 ```
 
-For the pipeline:
-```python
-...
-(
-    execution_time,
-    memory,
-    peak_memory,
-    energy,
-    flops,
-    energy_breakdown,
-    latency_breakdown,
-) = schedule_execution(
-    fast_traced.graph,
-    accelerator=model.accelerator,
-    copy_and_cleanup_graph=False,
-    plot=True,
-    plot_dir="results",
-    communication=True,
-)
+## Reference
 ```
-
-If you want to plot operation graphs, you need to install graphviz.\
-Mac: `brew install gprof2dot`\
-Linux: `sudo apt-get install graphviz`
-
-## Reference 📖
-```
-@Article{Büchel2025,
-  author={B{\"u}chel, Julian
-  and Vasilopoulos, Athanasios
-  and Simon, William Andrew
-  and Boybat, Irem
-  and Tsai, HsinYu
-  and Burr, Geoffrey W.
-  and Castro, Hernan
-  and Filipiak, Bill
-  and Le Gallo, Manuel
-  and Rahimi, Abbas
-  and Narayanan, Vijay
-  and Sebastian, Abu},
-  title={Efficient scaling of large language models with mixture of experts and 3D analog in-memory computing},
-  journal={Nature Computational Science},
-  year={2025},
-  month={Jan},
-  day={08},
-  issn={2662-8457},
-  doi={10.1038/s43588-024-00753-x},
-  url={https://doi.org/10.1038/s43588-024-00753-x}
+@Article{MoEwithPIM2026,
+  author={Hanyuan Gao and Xiaoxuan Yang},
+  title={Area-Efficient In-Memory Computing for Mixture-of-Experts via Multiplexing and Caching}
 }
 ```
 
-## License 🔏
-Please see the LICENSE file.
+## License
+Please see the [NOTICE](./NOTICE) and [LICENSE](./LICENSE) file.

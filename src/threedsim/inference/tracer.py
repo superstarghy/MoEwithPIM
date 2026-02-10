@@ -71,7 +71,7 @@ def trace_model(model, bsz: int = 1, concrete_args: dict = {}):
 
 
 def trace_prune_and_patch(
-    model: torch.nn.Module, seq_length_decoding_id: tuple, kv_caching: bool = False
+    model: torch.nn.Module, seq_length_decoding_id: tuple, kv_caching: bool = False, prefill: bool = False,
 ):
     if len(seq_length_decoding_id) == 3:
         seq_length, decoding_id, context_len = seq_length_decoding_id
@@ -109,7 +109,7 @@ def trace_prune_and_patch(
         decoding_id=decoding_id,
     )
     # the patched linears introduced some new unimportant nodes that need to be removed
-    remove_unimportant_nodes_and_reconnect(symb_traced.graph, kv_caching=kv_caching)
+    remove_unimportant_nodes_and_reconnect(symb_traced.graph, kv_caching=kv_caching, prefill=prefill)
     trace_logger.debug(
         f"Finished patch & remove_unimportant in {time.time() - t0:.4f}s"
     )
@@ -210,7 +210,7 @@ def fast_trace_encoder_decoder(
 
 
 def fast_trace_decoder(
-    model: torch.nn.Module, start_len: int, target_len: int, bsz: int = 1
+    model: torch.nn.Module, start_len: int, target_len: int, bsz: int = 1, prefill: bool = True,
 ):
     """
     Accelerates tracing for the autoregressive forward pass.
@@ -242,8 +242,11 @@ def fast_trace_decoder(
     symb_traced = trace_prune_and_patch(
         model=model,
         seq_length_decoding_id=(start_len, 0),
+        kv_caching=False, # no kv caching for prefill
+        prefill=True,
     )
-    individual_graphs.append(symb_traced)
+    if prefill:
+        individual_graphs.append(symb_traced) # prefilling
     for decoding_id, seq_length in enumerate(range(start_len + 1, target_len)):
         seq_length_decoding_id = 1 if kv_caching else seq_length
         symb_traced = trace_prune_and_patch(

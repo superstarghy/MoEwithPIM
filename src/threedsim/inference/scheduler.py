@@ -62,6 +62,23 @@ def schedule_execution(
         print("Adding communication nodes...")
         add_comm_nodes(graph)
         print("...done.")
+        num_tier = 0
+        comm_in = 0
+        comm_out = 0
+        comm = 0
+        for node in graph.nodes:
+            if "tier_linear" in node.name:
+                num_tier += 1
+            if "communication_in" in node.name:
+                comm_in += 1
+            if "communication_out" in node.name:
+                comm_out += 1
+            if "communication" in node.name:
+                comm += 1
+        print(f"Number of communication nodes: {comm}")
+        print(f"Number of communication_in nodes: {comm_in}")
+        print(f"Number of communication_out nodes: {comm_out}")
+        print(f"Number of tier_linear nodes: {num_tier}")
 
     # Initialize global clock
     current_time = 0
@@ -85,8 +102,10 @@ def schedule_execution(
     ]
     break_down_energy = {**{"passive": 0}, **{k: 0 for k in op_keys}}
     break_down_latency = {k: 0 for k in op_keys}
-    break_down_energy["mha"] = {"dram": 0, "comp": 0}
-    break_down_latency["mha"] = {"dram": 0, "comp": 0}
+    break_down_energy["mha"] = {"dram_kv": 0, "dram_go": 0, "comp": 0}
+    break_down_latency["mha"] = {"dram_kv": 0, "dram_go": 0, "comp": 0}
+    mha_time = []
+    mha_energy = []
 
     # Initialize active energy running sum
     active_energy = 0
@@ -156,12 +175,18 @@ def schedule_execution(
                     if op_name in n.name:
                         if op_name == "mha":
                             # need to distinguish between dram and mha time/energy
-                            dram_energy, comp_energy = active_energy_of_finished_node
-                            active_energy_of_finished_node = dram_energy + comp_energy
-                            break_down_energy[op_name]["dram"] += dram_energy
+                            dram_go_energy, dram_kv_energy, comp_energy = active_energy_of_finished_node
+                            active_energy_of_finished_node = dram_kv_energy + comp_energy
+                            break_down_energy[op_name]["dram_kv"] +=  dram_kv_energy
+                            break_down_energy[op_name]["dram_go"] +=  dram_go_energy
                             break_down_energy[op_name]["comp"] += comp_energy
-                            break_down_latency[op_name]["dram"] += n.dram_latency
+                            break_down_latency[op_name]["dram_kv"] += n.dram_kv_latency
+                            break_down_latency[op_name]["dram_go"] += n.dram_go_latency
                             break_down_latency[op_name]["comp"] += n.comp_latency
+                            mha_time.append(current_time)
+                            mha_energy.append(active_energy+active_energy_of_finished_node)
+                            print(f"current time: {current_time}, mha lat: {n.latency}")
+                            print(f"current energy: {active_energy+active_energy_of_finished_node}, mha energy: {active_energy_of_finished_node}")
                         else:
                             break_down_energy[op_name] += active_energy_of_finished_node
                             break_down_latency[op_name] += n.latency
@@ -232,6 +257,8 @@ def schedule_execution(
         flops,
         break_down_energy,
         break_down_latency,
+        mha_time,
+        mha_energy,
     )
 
 
@@ -433,9 +460,12 @@ def _assign_latency(node: Node, accelerator_config: AcceleratorConfig):
         return
 
     if "tier_linear" in node.name:  # Static time for MVM
-        lat = accelerator_config.mvm_latency
-    elif "communication" in node.name:  # Always same as the tile's output dimension
-        lat = accelerator_config.com_latency(accelerator_config.tier_shape[1])
+        # lat = accelerator_config.mvm_latency
+        lat = accelerator_config.mvm_latency(node.kwargs["op_info"]["decoding_id"])
+    elif "communication_in" in node.name:  # Always same as the tile's output dimension
+        lat = accelerator_config.com_latency(accelerator_config.tier_shape[1], input_or_not=True)
+    elif "communication" in node.name:  # Always same as the tile's input dimension
+        lat = accelerator_config.com_latency(accelerator_config.tier_shape[1], input_or_not=False)
     elif "multinomial" in node.name:
         lat = accelerator_config.multinomial_latency(
             node.kwargs["op_info"]["vocab_size"]
@@ -443,18 +473,19 @@ def _assign_latency(node: Node, accelerator_config: AcceleratorConfig):
     else:
         vector_size = _get_size_from_digital_op(node)
         if "mha_" in node.name:  # Function of seq len and size
-            kv_caching = False
-            if "kv_caching" in node.kwargs["op_info"]:
-                kv_caching = node.kwargs["op_info"]["kv_caching"]
-            dram_lat, comp_lat = accelerator_config.mha_latency(
+            prefill = False
+            if "prefill" in node.kwargs["op_info"]:
+                prefill = node.kwargs["op_info"]["prefill"]
+            dram_go_lat, dram_kv_lat, comp_lat = accelerator_config.mha_latency(
                 vector_size,
                 node.kwargs["op_info"]["seq_len"],
                 node.kwargs["op_info"]["causal"],
                 node.kwargs["op_info"]["nhead"],
-                kv_caching,
-            )
-            lat = dram_lat + comp_lat
-            node.dram_latency = dram_lat
+                prefill,
+            ) # go cache is simulated here
+            lat = dram_kv_lat + comp_lat # go cache latency is included in communication
+            node.dram_go_latency = dram_go_lat
+            node.dram_kv_latency = dram_kv_lat
             node.comp_latency = comp_lat
         elif "layer_norm" in node.name:
             lat = accelerator_config.layer_norm_latency(vector_size)
@@ -627,19 +658,21 @@ def _calculate_memory_utilization(memory: dict):
 def _calculate_energy(node: Node, accelerator_config: AcceleratorConfig):
     if "tier_linear" in node.name:
         return accelerator_config.mvm_energy
+    elif "communication_in" in node.name:
+        return accelerator_config.com_energy(accelerator_config.tier_shape[1], input_or_not=True)
     elif "communication" in node.name:
-        return accelerator_config.com_energy(accelerator_config.tier_shape[1])
+        return accelerator_config.com_energy(accelerator_config.tier_shape[1], input_or_not=False)
     else:
         vector_size = _get_size_from_digital_op(node)
         if "mha" in node.name:  # Function of seq len and size
-            kv_caching = False
-            if "kv_caching" in node.kwargs["op_info"]:
-                kv_caching = node.kwargs["op_info"]["kv_caching"]
+            prefill = False
+            if "prefill" in node.kwargs["op_info"]:
+                prefill = node.kwargs["op_info"]["prefill"]
             return accelerator_config.mha_energy(
                 vector_size,
                 node.kwargs["op_info"]["seq_len"],
                 node.kwargs["op_info"]["causal"],
-                kv_caching,
+                prefill,
             )
         elif "layer_norm" in node.name:
             return accelerator_config.layer_norm_energy(vector_size)
@@ -667,14 +700,18 @@ def _calculate_flops(node: Node, accelerator_config: AcceleratorConfig):
     else:
         vector_size = _get_size_from_digital_op(node)
         if "mha" in node.name:  # Function of seq len and size
-            kv_caching = False
-            if "kv_caching" in node.kwargs["op_info"]:
-                kv_caching = node.kwargs["op_info"]["kv_caching"]
+            kv_flag = accelerator_config.kv_flag
+            # kv_caching = False
+            # if "kv_caching" in node.kwargs["op_info"]:
+            #     kv_caching = node.kwargs["op_info"]["kv_caching"]
+            prefill = False
+            if "prefill" in node.kwargs["op_info"]:
+                prefill = node.kwargs["op_info"]["prefill"]
             return _flops_mha(
                 vector_size,
                 node.kwargs["op_info"]["seq_len"],
                 node.kwargs["op_info"]["causal"],
-                kv_caching,
+                False if prefill else kv_flag,
             )
         elif "layer_norm" in node.name:
             return _flops_layer_norm(vector_size)
