@@ -4,7 +4,7 @@ Repository of the paper Area-Efficient In-Memory Computing for
 Mixture-of-Experts via Multiplexing and Caching
 [![github-repo](https://img.shields.io/badge/github-grey?logo=github)](https://github.com/superstarghy/MoEwithPIM)
 [![Paper](https://img.shields.io/badge/paper-blue?logo=ieee)]()
-[![arxiv](https://img.shields.io/badge/arxiv-red?logo=arxiv)]()
+[![arxiv](https://img.shields.io/badge/arxiv-red?logo=arxiv)](https://arxiv.org/abs/2602.10254)
 
 <p align="center">
   <img src="./figures/overview.PNG" width="60%">
@@ -72,9 +72,14 @@ _ = schedule_execution(...,  plot=True, plot_dir="results")
 
 ## Reference
 ```
-@Article{MoEwithPIM2026,
-  author={Hanyuan Gao and Xiaoxuan Yang},
-  title={Area-Efficient In-Memory Computing for Mixture-of-Experts via Multiplexing and Caching}
+@misc{gao2026imc_moe,
+      title={Area-Efficient In-Memory Computing for Mixture-of-Experts via Multiplexing and Caching}, 
+      author={Hanyuan Gao and Xiaoxuan Yang},
+      year={2026},
+      eprint={2602.10254},
+      archivePrefix={arXiv},
+      primaryClass={cs.AR},
+      url={https://arxiv.org/abs/2602.10254}, 
 }
 ```
 
