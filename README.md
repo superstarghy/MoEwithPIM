@@ -1,10 +1,12 @@
 # MoE-PIM
 
+[![github-repo](https://img.shields.io/badge/github-grey?logo=github)](https://github.com/superstarghy/MoEwithPIM)
+[![Paper](https://img.shields.io/badge/paper-blue?logo=ieee)](https://ieeexplore.ieee.org/abstract/document/11562485/?casa_token=9C0IwtQ4Zw0AAAAA:zQlujTWSOOjltMdo8s_lz9PJQ33gJk0gS9RO7aVeBORxQ-AGwsOez2q5r7ywWpcnNweOI-OQUIQ)
+[![arxiv](https://img.shields.io/badge/arxiv-red?logo=arxiv)](https://arxiv.org/abs/2602.10254)
+
 Repository of the paper Area-Efficient In-Memory Computing for
 Mixture-of-Experts via Multiplexing and Caching
-[![github-repo](https://img.shields.io/badge/github-grey?logo=github)](https://github.com/superstarghy/MoEwithPIM)
-[![Paper](https://img.shields.io/badge/paper-blue?logo=ieee)]()
-[![arxiv](https://img.shields.io/badge/arxiv-red?logo=arxiv)]()
+
 
 <p align="center">
   <img src="./figures/overview.PNG" width="60%">
@@ -72,10 +74,17 @@ _ = schedule_execution(...,  plot=True, plot_dir="results")
 
 ## Reference
 ```
-@Article{MoEwithPIM2026,
-  author={Hanyuan Gao and Xiaoxuan Yang},
-  title={Area-Efficient In-Memory Computing for Mixture-of-Experts via Multiplexing and Caching}
-}
+@INPROCEEDINGS{PIMforMoE,
+  author={Gao, Hanyuan and Yang, Xiaoxuan},
+  booktitle={2026 IEEE International Symposium on Circuits and Systems (ISCAS)}, 
+  title={Area-Efficient In-Memory Computing for Mixture-of-Experts via Multiplexing and Caching}, 
+  year={2026},
+  volume={},
+  number={},
+  pages={912-916},
+  keywords={Modeling;Schedules;Scheduling;Printing;In-memory computing;Loading;Routing;Design methodology;Energy;Multiplexing;mixture-of-experts;process-in-memory;dataflow},
+  doi={10.1109/ISCAS66217.2026.11562485}}
+
 ```
 
 ## License
